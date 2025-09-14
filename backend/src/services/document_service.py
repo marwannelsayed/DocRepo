@@ -108,9 +108,9 @@ class DocumentService:
         return self.document_repo.set_current_version(document_id, version_id)
 
     def update_document(self, document_id: str, title: str, 
-                       description: Optional[str], tags: List[str],
+                       description: Optional[str], tags: List[str], existing_tags: List[str],
                        current_user_id: str, file: Optional[UploadFile] = None) -> Optional[Dict[str, Any]]:
-        """Update document details and optionally add new version"""
+        """Update document details and create new version for any change"""
         # Update basic info
         update_data = {"title": title, "description": description}
         success = self.document_repo.update_document(document_id, update_data)
@@ -118,18 +118,19 @@ class DocumentService:
         if not success:
             return None
         
-        # Handle new file version
+        # Get current version info for creating new version
+        versions = self.document_repo.get_document_versions(document_id)
+        current_version = next((v for v in versions if v["is_current"]), None)
+        
+        # Get next version number
+        next_version = max([v["version_number"] for v in versions], default=0) + 1
+        
+        # Create new version (for any change - file or metadata)
         if file:
+            # New file uploaded
             file_path = self._save_uploaded_file(file, document_id)
-            
-            # Calculate file checksum
             file_checksum = self._calculate_file_hash(file_path)
             
-            # Get next version number
-            versions = self.document_repo.get_document_versions(document_id)
-            next_version = max([v["version_number"] for v in versions], default=0) + 1
-            
-            # Create new version
             version_data = {
                 "version_id": str(uuid.uuid4()),
                 "document_id": document_id,
@@ -142,24 +143,55 @@ class DocumentService:
                 "uploaded_by": current_user_id,
                 "is_current": False  # Initially set to false
             }
-            
-            new_version = self.document_repo.create_document_version(version_data)
-            
-            # Now set this version as current (this will automatically set others to false)
-            self.document_repo.set_current_version(document_id, version_data["version_id"])
-            
-            # Ensure consistency
-            self.document_repo.ensure_single_current_version(document_id)
+        else:
+            # No new file, but metadata changed - create version with same file
+            if current_version:
+                version_data = {
+                    "version_id": str(uuid.uuid4()),
+                    "document_id": document_id,
+                    "version_number": next_version,
+                    "file_name": current_version["file_name"],
+                    "file_path": current_version["file_path"],
+                    "file_type": current_version["file_type"],
+                    "file_size": current_version["file_size"],
+                    "checksum": current_version.get("checksum", ""),  # Handle missing checksum
+                    "uploaded_by": current_user_id,
+                    "is_current": False  # Initially set to false
+                }
+            else:
+                return None  # Can't create version without current version data
         
-        # Update tags - simple approach: remove all and re-add
-        # Note: In production, you might want a more sophisticated approach
-        if tags:
-            tag_objects = self.tag_repo.get_tags_by_names(tags)
+        # Create the new version
+        new_version = self.document_repo.create_document_version(version_data)
+        
+        # Set this version as current (this will automatically set others to false)
+        self.document_repo.set_current_version(document_id, version_data["version_id"])
+        
+        # Ensure consistency
+        self.document_repo.ensure_single_current_version(document_id)
+        
+        # Handle tags - replace all tags with existing_tags + new tags
+        all_tags = existing_tags + tags  # Combine existing (after removals) and new tags
+        if all_tags:
+            # Remove all existing document tags first
+            self.document_repo.remove_all_document_tags(document_id)
+            
+            # Add the new combined tag set
+            tag_objects = self.tag_repo.get_tags_by_names(all_tags)
             tag_ids = [tag.tag_id for tag in tag_objects]
-            # Remove existing tags and add new ones
-            # This would require additional repository methods for tag management
+            self.document_repo.add_document_tags(document_id, tag_ids, current_user_id)
+        elif existing_tags == [] and tags == []:
+            # If both lists are empty, remove all tags
+            self.document_repo.remove_all_document_tags(document_id)
         
-        return self.get_document_details(document_id)
+        # Get updated document details
+        document_details = self.get_document_details(document_id)
+        
+        # Include the new version number in the response
+        if document_details and document_details.get("current_version"):
+            document_details["version_number"] = document_details["current_version"]["version_number"]
+        
+        return document_details
 
     def delete_document(self, document_id: str) -> bool:
         """Delete document and clean up files"""

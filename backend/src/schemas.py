@@ -82,8 +82,7 @@ class TokenData(BaseModel):
 class TagResponse(BaseModel):
     tag_id: str
     name: str
-    description: Optional[str]
-    color: Optional[str]
+    description: Optional[str] = None
 
     class Config:
         from_attributes = True

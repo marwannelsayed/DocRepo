@@ -114,7 +114,7 @@ const DocumentDetail = () => {
           {error}
         </Alert>
         <Button onClick={() => navigate('/documents')} startIcon={<ArrowBack />}>
-          Back to Documents
+          BACK TO DOCUMENTS
         </Button>
       </Box>
     );
@@ -127,7 +127,7 @@ const DocumentDetail = () => {
           Document not found
         </Alert>
         <Button onClick={() => navigate('/documents')} startIcon={<ArrowBack />}>
-          Back to Documents
+          BACK TO DOCUMENTS
         </Button>
       </Box>
     );
@@ -138,7 +138,7 @@ const DocumentDetail = () => {
       {/* Header */}
       <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
         <Button onClick={() => navigate('/documents')} startIcon={<ArrowBack />}>
-          Back to Documents
+          BACK TO DOCUMENTS
         </Button>
       </Box>
 

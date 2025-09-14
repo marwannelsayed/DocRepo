@@ -7,8 +7,17 @@ from ..schemas import DocumentCreate, DocumentResponse, DocumentVersionResponse
 from ..core.auth import get_current_active_user
 from pathlib import Path
 from typing import List, Optional
+from pydantic import BaseModel
 
 document_router = APIRouter(prefix="/documents", tags=["documents"])
+
+# Request models
+class AddTagsRequest(BaseModel):
+    tags: List[str]
+
+
+class AddTagsRequest(BaseModel):
+    tags: List[str]
 
 
 @document_router.post("", response_model=DocumentResponse)
@@ -42,7 +51,7 @@ async def create_document(
 @document_router.get("", response_model=List[DocumentResponse])
 async def get_documents(
     search: Optional[str] = None,
-    tag: Optional[str] = None,
+    tags: Optional[str] = None,  # Changed from 'tag' to 'tags' for multiple tags
     limit: int = 100,
     offset: int = 0,
     current_user: dict = Depends(get_current_active_user),
@@ -53,7 +62,7 @@ async def get_documents(
         document_service = DocumentService(db)
         documents = document_service.get_documents(
             search=search,
-            tag_filter=tag,
+            tag_filter=tags,  # Pass the tags string to service
             limit=limit,
             offset=offset
         )
@@ -139,6 +148,7 @@ async def update_document(
     title: str = Form(...),
     description: Optional[str] = Form(None),
     tags: str = Form(""),
+    existing_tags: str = Form(""),
     file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db)
@@ -147,6 +157,7 @@ async def update_document(
     try:
         # Parse tags
         tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()] if tags else []
+        existing_tag_list = [tag.strip() for tag in existing_tags.split(",") if tag.strip()] if existing_tags else []
         
         document_service = DocumentService(db)
         
@@ -160,6 +171,7 @@ async def update_document(
             title=title,
             description=description,
             tags=tag_list,
+            existing_tags=existing_tag_list,
             current_user_id=current_user["user_id"],
             file=file
         )
@@ -257,3 +269,46 @@ async def download_document_version(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to download document version: {str(e)}")
+
+
+@document_router.post("/{document_id}/tags")
+async def add_document_tags(
+    document_id: str,
+    request: AddTagsRequest,
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Add tags to an existing document"""
+    try:
+        document_service = DocumentService(db)
+        
+        # Get current document to preserve existing tags
+        document_details = document_service.get_document_details(document_id)
+        if not document_details:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Get existing tags
+        existing_tags = [tag for tag in document_details.get('tags', [])]
+        
+        # Combine existing tags with new tags (remove duplicates)
+        all_tags = list(set(existing_tags + request.tags))
+        
+        # Update document with combined tags
+        result = document_service.update_document(
+            document_id=document_id,
+            title=document_details['title'],
+            description=document_details['description'],
+            tags=[],  # new tags only
+            existing_tags=all_tags,  # all tags including existing ones
+            current_user_id=current_user["user_id"]
+        )
+        
+        if result:
+            return {"message": "Tags added successfully", "tags": all_tags}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to add tags")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add tags: {str(e)}")

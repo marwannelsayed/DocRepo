@@ -171,4 +171,71 @@ export const rolesAPI = {
   },
 };
 
+// DocEx Classification API
+const DOCEX_API_URL = process.env.REACT_APP_DOCEX_API_URL || 'http://localhost:8000';
+
+export const classificationAPI = {
+  classifyDocument: async (documentId) => {
+    try {
+      // First, get the document file from DocRepo
+      const response = await api.get(`/api/documents/${documentId}/download`, {
+        responseType: 'blob'
+      });
+      
+      // Get the filename from the response headers or use a default
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = 'document';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create a proper File object from the blob
+      const file = new File([response.data], filename, {
+        type: response.headers['content-type'] || 'application/octet-stream'
+      });
+      
+      // Create FormData for DocEx API
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Send to DocEx classification API
+      const classificationResponse = await axios.post(
+        `${DOCEX_API_URL}/classify/document`,
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+          timeout: 30000, // 30 second timeout
+        }
+      );
+      
+      return classificationResponse.data;
+    } catch (error) {
+      console.error('Classification error:', error);
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+      }
+      throw error;
+    }
+  },
+  
+  // Add email tag to document if classified as email
+  addEmailTag: async (documentId) => {
+    try {
+      const response = await api.post(`/api/documents/${documentId}/tags`, {
+        tags: ['Email']
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error adding email tag:', error);
+      throw error;
+    }
+  }
+};
+
 export default api;

@@ -20,10 +20,20 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   
+  // Debug: Log when error state changes
+  React.useEffect(() => {
+    console.log("🔍 Error state changed to:", error);
+  }, [error]);
+  
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleChange = (e) => {
+    // Clear error when user starts typing
+    if (error) {
+      setError('');
+    }
+    
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
@@ -36,6 +46,7 @@ const Login = () => {
     setLoading(true);
 
     console.log("🔍 LOGIN BUTTON CLICKED:", new Date().toISOString());
+    console.log("🔍 Form data:", { email: formData.email, password: "***" });
     const submitStartTime = performance.now();
 
     try {
@@ -48,7 +59,7 @@ const Login = () => {
       console.log(`🔍 Login function returned in ${(loginCallEnd - loginCallStart).toFixed(3)}ms`);
       console.log("🔍 Login result:", result);
       
-      if (result.success) {
+      if (result && result.success) {
         console.log("🔍 Login successful, navigating...");
         const navStart = performance.now();
         
@@ -57,18 +68,22 @@ const Login = () => {
         const navEnd = performance.now();
         console.log(`🔍 Navigation completed in ${(navEnd - navStart).toFixed(3)}ms`);
       } else {
-        console.log("🔍 Login failed:", result.error);
-        setError(result.error);
+        console.log("🔍 Login failed:", result?.error);
+        console.log("🔍 Setting error state to:", result?.error);
+        const errorMsg = result?.error || 'Incorrect email or password';
+        setError(errorMsg);
+        console.log("🔍 Error state set, component should re-render with error:", errorMsg);
       }
     } catch (error) {
       console.error("🔍 Unexpected error in handleSubmit:", error);
-      setError("An unexpected error occurred");
+      console.log("🔍 Setting error state to: An unexpected error occurred");
+      setError("An unexpected error occurred. Please try again.");
+    } finally {
+      const totalSubmitTime = performance.now() - submitStartTime;
+      console.log(`🔍 TOTAL SUBMIT PROCESS: ${totalSubmitTime.toFixed(3)}ms`);
+      console.log("🔍 Setting loading to false");
+      setLoading(false);
     }
-    
-    const totalSubmitTime = performance.now() - submitStartTime;
-    console.log(`🔍 TOTAL SUBMIT PROCESS: ${totalSubmitTime.toFixed(3)}ms`);
-    
-    setLoading(false);
   };
 
   return (
@@ -90,9 +105,12 @@ const Login = () => {
           </Typography>
           
           {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
-            </Alert>
+            <>
+              {console.log("🔍 Rendering error alert with message:", error)}
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            </>
           )}
           
           <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>

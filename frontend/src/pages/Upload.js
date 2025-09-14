@@ -15,6 +15,7 @@ import {
   AttachFile,
   Add,
   Update,
+  ArrowBack,
 } from '@mui/icons-material';
 import { documentsAPI } from '../services/api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -22,7 +23,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 const Upload = () => {
   const [searchParams] = useSearchParams();
   const documentId = searchParams.get('documentId');
-  const mode = searchParams.get('mode'); // 'update' for updating existing document
+  const mode = searchParams.get('mode');
   const isUpdateMode = mode === 'update' && documentId;
   
   const [formData, setFormData] = useState({
@@ -31,8 +32,11 @@ const Upload = () => {
     tags: '',
   });
   const [selectedFile, setSelectedFile] = useState(null);
+  const [currentVersion, setCurrentVersion] = useState(null);
   const [tagInput, setTagInput] = useState('');
   const [tagList, setTagList] = useState([]);
+  const [existingTags, setExistingTags] = useState([]);
+  const [originalData, setOriginalData] = useState(null); // Store original document data
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -51,13 +55,30 @@ const Upload = () => {
     try {
       setLoadingDocument(true);
       const document = await documentsAPI.getDocument(documentId);
-      setFormData({
+      
+      const formDataValues = {
         title: document.title,
         description: document.description || '',
         tags: '',
+      };
+      
+      setFormData(formDataValues);
+      
+      // Store original data for comparison
+      setOriginalData({
+        title: document.title,
+        description: document.description || '',
+        tags: document.tags || []
       });
+      
+      // Store current version information
+      if (document.current_version) {
+        setCurrentVersion(document.current_version);
+      }
+      
       if (document.tags && document.tags.length > 0) {
-        setTagList(document.tags);
+        setExistingTags(document.tags); // Store existing tags separately
+        setTagList([]); // Start with empty new tags list
       }
     } catch (error) {
       console.error('Error loading document:', error);
@@ -87,14 +108,21 @@ const Upload = () => {
 
   const handleAddTag = () => {
     const tag = tagInput.trim();
-    if (tag && !tagList.includes(tag)) {
+    if (tag && !tagList.includes(tag) && !existingTags.includes(tag)) {
       setTagList([...tagList, tag]);
       setTagInput('');
+    } else if (existingTags.includes(tag)) {
+      setError('This tag already exists on the document');
+      setTimeout(() => setError(''), 3000);
     }
-  };
+    }
 
   const handleRemoveTag = (tagToRemove) => {
     setTagList(tagList.filter(tag => tag !== tagToRemove));
+  };
+
+  const handleRemoveExistingTag = (tagToRemove) => {
+    setExistingTags(existingTags.filter(tag => tag !== tagToRemove));
   };
 
   const handleTagKeyPress = (e) => {
@@ -102,6 +130,25 @@ const Upload = () => {
       e.preventDefault();
       handleAddTag();
     }
+  };
+
+  const hasChanges = () => {
+    if (!isUpdateMode || !originalData) return true; // For new documents, always allow
+    
+    // Check if title or description changed
+    const titleChanged = formData.title.trim() !== originalData.title;
+    const descriptionChanged = formData.description !== originalData.description;
+    
+    // Check if a new file was selected
+    const fileChanged = selectedFile !== null;
+    
+    // Check if tags changed (comparing arrays)
+    const currentTagsSet = new Set([...existingTags, ...tagList]);
+    const originalTagsSet = new Set(originalData.tags);
+    const tagsChanged = currentTagsSet.size !== originalTagsSet.size || 
+                       [...currentTagsSet].some(tag => !originalTagsSet.has(tag));
+    
+    return titleChanged || descriptionChanged || fileChanged || tagsChanged;
   };
 
   const formatFileSize = (bytes) => {
@@ -117,7 +164,8 @@ const Upload = () => {
     setError('');
     setSuccess('');
 
-    if (!selectedFile) {
+    // For new uploads, file is required. For updates, file is optional
+    if (!selectedFile && !isUpdateMode) {
       setError('Please select a file to upload');
       return;
     }
@@ -127,23 +175,47 @@ const Upload = () => {
       return;
     }
 
+    // For updates, check if any changes were made
+    if (isUpdateMode && !hasChanges()) {
+      setError('Please make some changes to update the document');
+      return;
+    }
+
     setLoading(true);
 
     try {
       const uploadFormData = new FormData();
-      uploadFormData.append('file', selectedFile);
+      
+      // Only append file if one is selected
+      if (selectedFile) {
+        uploadFormData.append('file', selectedFile);
+      }
+      
       uploadFormData.append('title', formData.title);
       uploadFormData.append('description', formData.description);
       
-      // Convert tagList array to individual form entries
-      tagList.forEach(tag => {
-        uploadFormData.append('tags', tag);
-      });
+      // For updates: send both existing tags (may have been modified) and new tags
+      // For creation: send all tags
+      if (isUpdateMode) {
+        // Send all existing tags (after any removals)
+        existingTags.forEach(tag => {
+          uploadFormData.append('existing_tags', tag);
+        });
+        // Send new tags to be added
+        tagList.forEach(tag => {
+          uploadFormData.append('tags', tag);
+        });
+      } else {
+        // For new documents, send all tags
+        tagList.forEach(tag => {
+          uploadFormData.append('tags', tag);
+        });
+      }
 
       let response;
       if (isUpdateMode) {
         response = await documentsAPI.updateDocument(documentId, uploadFormData);
-        setSuccess(`Document "${formData.title}" updated successfully with version ${response.version_number}!`);
+        setSuccess(`Document "${formData.title}" updated successfully!`);
       } else {
         response = await documentsAPI.createDocument(uploadFormData);
         setSuccess(`Document "${response.title}" uploaded successfully!`);
@@ -153,6 +225,7 @@ const Upload = () => {
       setFormData({ title: '', description: '', tags: '' });
       setSelectedFile(null);
       setTagList([]);
+      setExistingTags([]);
       
       // Redirect to documents page after a delay
       setTimeout(() => {
@@ -169,9 +242,14 @@ const Upload = () => {
 
   return (
     <Box>
-      <Typography variant="h4" component="h1" gutterBottom>
-        {isUpdateMode ? 'Update Document' : 'Upload Document'}
-      </Typography>
+      <Button onClick={() => navigate('/documents')} startIcon={<ArrowBack />}>
+          BACK TO DOCUMENTS
+        </Button>
+      <Box sx={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+        <Typography variant="h4" component="h1">
+          {isUpdateMode ? 'Update Document' : 'Upload Document'}
+        </Typography>
+      </Box>
       
       <Paper sx={{ p: 4, maxWidth: 600, mx: 'auto' }}>
         {loadingDocument && (
@@ -195,6 +273,25 @@ const Upload = () => {
             )}
 
             <Box component="form" onSubmit={handleSubmit}>
+              
+              {/* Current Version Info for Updates */}
+              {isUpdateMode && currentVersion && (
+                <Alert severity="info" sx={{ mb: 3 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Current Version: {currentVersion.file_name}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Size: {formatFileSize(currentVersion.file_size)} • 
+                    Type: {currentVersion.file_type} • 
+                    Version: {currentVersion.version_number} • 
+                    Uploaded: {new Date(currentVersion.uploaded_at).toLocaleDateString()}
+                  </Typography>
+                  <Typography variant="body2" sx={{ mt: 1 }}>
+                    Select a new file below to upload a new version, or leave empty to only update metadata.
+                  </Typography>
+                </Alert>
+              )}
+
           {/* File Upload */}
           <Box
             sx={{
@@ -220,7 +317,7 @@ const Upload = () => {
                 startIcon={<AttachFile />}
                 sx={{ mb: 2 }}
               >
-                Choose File
+                {isUpdateMode ? 'Choose New File (Optional)' : 'Choose File'}
               </Button>
             </label>
             
@@ -238,7 +335,10 @@ const Upload = () => {
               </Box>
             ) : (
               <Typography variant="body1" color="text.secondary">
-                Click to select a file or drag and drop
+                {isUpdateMode 
+                  ? 'Click to select a new file or leave empty to only update metadata'
+                  : 'Click to select a file or drag and drop'
+                }
               </Typography>
             )}
           </Box>
@@ -289,22 +389,53 @@ const Upload = () => {
               helperText="Press Enter or click Add to add tags"
             />
             
-            {tagList.length > 0 && (
+            {/* Show tags section */}
+            {(isUpdateMode || tagList.length > 0) && (
               <Box sx={{ mt: 2 }}>
                 <Typography variant="subtitle2" gutterBottom>
                   Tags:
                 </Typography>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                  {tagList.map((tag, index) => (
-                    <Chip
-                      key={index}
-                      label={tag}
-                      onDelete={() => handleRemoveTag(tag)}
-                      color="primary"
-                      variant="outlined"
-                    />
-                  ))}
-                </Box>
+                
+                {/* Show existing tags if in update mode */}
+                {isUpdateMode && existingTags.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="caption" color="text.secondary" gutterBottom>
+                      Existing tags:
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
+                      {existingTags.map((tag, index) => (
+                        <Chip
+                          key={`existing-${index}`}
+                          label={tag}
+                          color="default"
+                          variant="filled"
+                          size="small"
+                          onDelete={() => handleRemoveExistingTag(tag)}
+                        />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+                
+                {/* Show new tags */}
+                {tagList.length > 0 && (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" gutterBottom>
+                      {isUpdateMode ? 'New tags to add:' : 'Tags:'}
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {tagList.map((tag, index) => (
+                        <Chip
+                          key={index}
+                          label={tag}
+                          onDelete={() => handleRemoveTag(tag)}
+                          color="primary"
+                          variant="outlined"
+                        />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
               </Box>
             )}
           </Box>
@@ -331,5 +462,7 @@ const Upload = () => {
     </Box>
   );
 };
+
+
 
 export default Upload;

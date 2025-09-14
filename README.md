@@ -1,6 +1,87 @@
 # Document Repository Management System
 
-A full-stack document management system built with FastAPI (Python) backend and React (JavaScript) frontend, featuring advanced document versioning, user management, and optimized performance.
+A full-stack document manageme## 📋 Prerequisites
+
+### For Docker (Recommended)
+1. **Docker** and **Docker Compose** installed
+2. **Git** (for version control)
+
+### For Manual Installation
+1. **Python 3.12+** installed
+2. **Node.js 18+** and npm installed
+3. **PostgreSQL 12+** database server running
+4. **Git** (for version control)
+
+## 🚀 Quick Start with Docker
+
+### 1. Clone the Repository
+```bash
+git clone <repository-url>
+cd DocRepo
+```
+
+### 2. Setup Environment
+```bash
+# Create environment file from example
+make setup
+# or manually: cp .env.example .env
+
+# Edit .env file with your configuration
+# Minimum required changes:
+# - Set POSTGRES_PASSWORD to a secure password
+# - Set SECRET_KEY to a secure random string
+```
+
+### 3. Start Development Environment
+```bash
+# Start all services
+make dev-up
+
+# Or using docker-compose directly
+docker-compose -f docker-compose.dev.yml up -d
+```
+
+### 4. Access the Application
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8088
+- **API Documentation**: http://localhost:8088/docs
+- **Database**: localhost:5432
+
+### 5. Other Docker Commands
+```bash
+# View logs
+make logs
+
+# Stop services
+make dev-down
+
+# Restart services
+make restart
+
+# Clean up everything
+make clean
+
+# Production deployment
+make prod-up
+```
+
+## 🐳 Docker Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `make setup` | Create .env file from example |
+| `make dev-up` | Start development environment |
+| `make dev-down` | Stop development environment |
+| `make prod-up` | Start production environment |
+| `make prod-down` | Stop production environment |
+| `make logs` | Show service logs |
+| `make clean` | Clean up containers and volumes |
+| `make rebuild` | Rebuild and restart services |
+| `make db-shell` | Access database shell |
+
+## 🛠 Manual Installation & Setup
+
+### Prerequisitesith FastAPI (Python) backend and React (JavaScript) frontend, featuring advanced document versioning, user management, and Docker containerization.
 
 ## ✨ Features
 
@@ -35,6 +116,14 @@ A full-stack document management system built with FastAPI (Python) backend and 
 - Document versioning interface
 - Consistent form styling and layouts
 
+### 🐳 Docker Support
+- Complete Docker containerization
+- Production and development environments
+- Docker Compose orchestration
+- Automatic database initialization
+- Health checks and service dependencies
+- Volume persistence for data and uploads
+
 ## 🛠 Technology Stack
 
 ### Backend (Production-Optimized)
@@ -45,7 +134,7 @@ A full-stack document management system built with FastAPI (Python) backend and 
 - **Pydantic v2**: Advanced data validation and serialization
 - **Uvicorn**: High-performance ASGI server
 - **Bcrypt**: Password hashing optimization
-- **Python 3.13+**: Latest Python features
+- **Python 3.12+**: Latest Python features
 
 ### Frontend (Modern React)
 - **React 19**: Latest React with concurrent features

@@ -56,12 +56,19 @@ class DocumentRepository:
             params["search"] = f"%{search}%"
         
         if tag_filter:
-            base_query += """
-                JOIN document_tags dt ON d.document_id = dt.document_id
-                JOIN tags t ON dt.tag_id = t.tag_id
-            """
-            conditions.append("t.name = :tag_filter")
-            params["tag_filter"] = tag_filter
+            # Parse comma-separated tags
+            tag_names = [tag.strip() for tag in tag_filter.split(',') if tag.strip()]
+            if tag_names:
+                base_query += """
+                    JOIN document_tags dt ON d.document_id = dt.document_id
+                    JOIN tags t ON dt.tag_id = t.tag_id
+                """
+                # Create placeholders for each tag
+                tag_placeholders = ', '.join([f':tag_{i}' for i in range(len(tag_names))])
+                conditions.append(f"t.name IN ({tag_placeholders})")
+                # Add each tag to params
+                for i, tag_name in enumerate(tag_names):
+                    params[f"tag_{i}"] = tag_name
         
         if conditions:
             base_query += " WHERE " + " AND ".join(conditions)
@@ -98,6 +105,10 @@ class DocumentRepository:
             
             documents.append(doc_dict)
         
+        # Populate tags for each document
+        for document in documents:
+            document["tags"] = self.get_document_tags(document["document_id"])
+        
         return documents
 
     def get_document_with_details(self, document_id: str) -> Optional[Dict[str, Any]]:
@@ -131,7 +142,7 @@ class DocumentRepository:
         """Get all versions of a document"""
         query = text("""
             SELECT dv.version_id, dv.version_number, dv.file_name, dv.file_type, dv.file_size, 
-                   dv.uploaded_at, dv.is_current, dv.file_path, dv.uploaded_by,
+                   dv.uploaded_at, dv.is_current, dv.file_path, dv.uploaded_by, dv.checksum,
                    CONCAT(u.first_name, ' ', u.last_name) as uploader_name
             FROM document_versions dv
             LEFT JOIN users u ON dv.uploaded_by = u.user_id
@@ -151,7 +162,8 @@ class DocumentRepository:
                 "is_current": result[6],
                 "file_path": result[7],
                 "uploaded_by": str(result[8]) if result[8] else None,  # Convert UUID to string
-                "uploader_name": result[9] if result[9] else "Unknown"
+                "checksum": result[9] if result[9] else "",  # Handle missing checksum
+                "uploader_name": result[10] if result[10] else "Unknown"
             }
             for result in results
         ]
@@ -338,14 +350,12 @@ class DocumentRepository:
 
     def add_document_tags(self, document_id: str, tag_ids: List[str], added_by: str) -> None:
         """Add tags to a document"""
-        import uuid
         for tag_id in tag_ids:
             self.db.execute(
-                text("""INSERT INTO document_tags (document_tag_id, document_id, tag_id, added_by) 
-                        VALUES (:document_tag_id, :document_id, :tag_id, :added_by) 
+                text("""INSERT INTO document_tags (document_id, tag_id, added_by) 
+                        VALUES (:document_id, :tag_id, :added_by) 
                         ON CONFLICT DO NOTHING"""),
                 {
-                    "document_tag_id": str(uuid.uuid4()),
                     "document_id": document_id, 
                     "tag_id": tag_id,
                     "added_by": added_by
@@ -365,3 +375,18 @@ class DocumentRepository:
         
         results = self.db.execute(query, {"document_id": document_id}).fetchall()
         return [result[0] for result in results]
+
+    def remove_all_document_tags(self, document_id: str) -> bool:
+        """Remove all tags from a document"""
+        try:
+            query = text("""
+                DELETE FROM document_tags 
+                WHERE document_id = :document_id
+            """)
+            
+            self.db.execute(query, {"document_id": document_id})
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            raise e

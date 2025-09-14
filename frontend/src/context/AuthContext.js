@@ -66,9 +66,25 @@ export const AuthProvider = ({ children }) => {
       const totalTime = performance.now() - loginStartTime;
       console.log(`🔍 LOGIN FAILED after ${totalTime.toFixed(3)}ms`);
       console.error('Login error:', error);
+      
+      // Always show user-friendly messages, never expose technical errors
+      let errorMessage = 'Incorrect email or password';
+      
+      // Handle specific cases where we want different messages
+      if (!error.response) {
+        errorMessage = 'Unable to connect to server. Please try again.';
+      } else if (error.response?.status >= 500) {
+        errorMessage = 'Server error. Please try again later.';
+      } else if (error.response?.status === 422) {
+        errorMessage = 'Please check your email and password format.';
+      }
+      // For all authentication errors (401, 403, etc.), keep the generic message
+      
+      console.log('🔍 Final error message:', errorMessage);
+      
       return { 
         success: false, 
-        error: error.response?.data?.detail || 'Login failed' 
+        error: errorMessage 
       };
     }
   };
@@ -85,9 +101,21 @@ export const AuthProvider = ({ children }) => {
       return { success: true };
     } catch (error) {
       console.error('Registration error:', error);
+      
+      // User-friendly registration error messages
+      let errorMessage = 'Registration failed. Please try again.';
+      
+      if (!error.response) {
+        errorMessage = 'Unable to connect to server. Please try again.';
+      } else if (error.response?.status === 400) {
+        errorMessage = 'Please check your information and try again.';
+      } else if (error.response?.status >= 500) {
+        errorMessage = 'Server error. Please try again later.';
+      }
+      
       return { 
         success: false, 
-        error: error.response?.data?.detail || 'Registration failed' 
+        error: errorMessage 
       };
     }
   };

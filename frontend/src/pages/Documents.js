@@ -23,6 +23,7 @@ import {
   Menu,
   MenuItem,
   Snackbar,
+  Paper,
 } from '@mui/material';
 import {
   Search,
@@ -32,8 +33,13 @@ import {
   MoreVert,
   Edit,
   Delete,
+  Clear,
+  FilterList,
+  AutoAwesome,
 } from '@mui/icons-material';
 import { documentsAPI } from '../services/api';
+import { tagsAPI } from '../services/api';
+import { classificationAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 const Documents = () => {
@@ -41,6 +47,11 @@ const Documents = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [availableTags, setAvailableTags] = useState([]);
+  const [usedTags, setUsedTags] = useState([]); // Tags actually used in documents
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [tagSearchQuery, setTagSearchQuery] = useState('');
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [versions, setVersions] = useState([]);
   const [versionsDialogOpen, setVersionsDialogOpen] = useState(false);
@@ -50,6 +61,10 @@ const Documents = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  
+  // Classification state
+  const [classifyingDocument, setClassifyingDocument] = useState(null);
+  const [classificationResults, setClassificationResults] = useState({});
   
   const navigate = useNavigate();
 
@@ -62,6 +77,16 @@ const Documents = () => {
       setLoading(true);
       const data = await documentsAPI.getDocuments(searchParams);
       setDocuments(data);
+      
+      // Extract unique tags from all documents
+      const tagsSet = new Set();
+      data.forEach(doc => {
+        if (doc.tags && doc.tags.length > 0) {
+          doc.tags.forEach(tag => tagsSet.add(tag));
+        }
+      });
+      setUsedTags(Array.from(tagsSet).sort());
+      
       setError('');
     } catch (error) {
       console.error('Error fetching documents:', error);
@@ -76,7 +101,65 @@ const Documents = () => {
     if (searchQuery.trim()) {
       searchParams.search = searchQuery.trim();
     }
+    if (selectedTags.length > 0) {
+      searchParams.tags = selectedTags.join(',');
+    }
     fetchDocuments(searchParams);
+  };
+
+  const handleTagFilter = (tag) => {
+    const newSelectedTags = selectedTags.includes(tag)
+      ? selectedTags.filter(t => t !== tag)
+      : [...selectedTags, tag];
+    
+    setSelectedTags(newSelectedTags);
+    
+    // Auto-apply filter when tags change
+    const searchParams = {};
+    if (searchQuery.trim()) {
+      searchParams.search = searchQuery.trim();
+    }
+    if (newSelectedTags.length > 0) {
+      searchParams.tags = newSelectedTags.join(',');
+    }
+    fetchDocuments(searchParams);
+  };
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setSelectedTags([]);
+    fetchDocuments();
+  };
+
+  const handleFilterDialogOpen = () => {
+    setFilterDialogOpen(true);
+    setTagSearchQuery('');
+  };
+
+  const handleFilterDialogClose = () => {
+    setFilterDialogOpen(false);
+    setTagSearchQuery('');
+  };
+
+  const handleApplyFilters = () => {
+    const searchParams = {};
+    if (searchQuery.trim()) {
+      searchParams.search = searchQuery.trim();
+    }
+    if (selectedTags.length > 0) {
+      searchParams.tags = selectedTags.join(',');
+    }
+    fetchDocuments(searchParams);
+    handleFilterDialogClose();
+  };
+
+  const getFilteredTags = () => {
+    if (!tagSearchQuery.trim()) {
+      return usedTags;
+    }
+    return usedTags.filter(tag => 
+      tag.toLowerCase().includes(tagSearchQuery.toLowerCase())
+    );
   };
 
   const handleKeyPress = (e) => {
@@ -174,6 +257,100 @@ const Documents = () => {
     setSnackbar({ ...snackbar, open: false });
   };
 
+  const handleClassifyDocument = async (document) => {
+    try {
+      setClassifyingDocument(document.document_id);
+      
+      console.log('Starting classification for document:', document.document_id);
+      
+      // Call DocEx classification API
+      const result = await classificationAPI.classifyDocument(document.document_id);
+      
+      console.log('Classification result:', result);
+      
+      if (result.success) {
+        // Store classification result
+        setClassificationResults(prev => ({
+          ...prev,
+          [document.document_id]: result
+        }));
+        
+        // If classified as email and confidence > 0.8, add email tag
+        if (result.predicted_class === 'email' && result.confidence > 0.8) {
+          try {
+            console.log('Adding Email tag to document:', document.document_id);
+            await classificationAPI.addEmailTag(document.document_id);
+            
+            // Refresh documents to show new tag
+            fetchDocuments({
+              search: searchQuery,
+              tags: selectedTags
+            });
+            
+            setSnackbar({
+              open: true,
+              message: `Document classified as EMAIL (${Math.round(result.confidence * 100)}% confidence) and tagged automatically!`,
+              severity: 'success'
+            });
+          } catch (tagError) {
+            console.error('Error adding email tag:', tagError);
+            setSnackbar({
+              open: true,
+              message: `Classification: EMAIL (${Math.round(result.confidence * 100)}% confidence) - Error adding tag`,
+              severity: 'warning'
+            });
+          }
+        } else {
+          const classType = result.predicted_class === 'email' ? 'EMAIL' : 'NOT EMAIL';
+          setSnackbar({
+            open: true,
+            message: `Document classified as ${classType} (${Math.round(result.confidence * 100)}% confidence)`,
+            severity: 'info'
+          });
+        }
+      } else {
+        setSnackbar({
+          open: true,
+          message: 'Classification failed. Please try again.',
+          severity: 'error'
+        });
+      }
+    } catch (error) {
+      console.error('Classification error:', error);
+      
+      let errorMessage = 'Error during classification.';
+      
+      if (error.response) {
+        const status = error.response.status;
+        const responseData = error.response.data;
+        
+        console.error('HTTP Error:', status, responseData);
+        
+        if (status === 400) {
+          errorMessage = 'Invalid file format for classification. DocEx API expects image files (PNG, JPG) of documents.';
+        } else if (status === 422) {
+          errorMessage = 'File validation error. Please ensure the document is a valid image file.';
+        } else if (status >= 500) {
+          errorMessage = 'DocEx API server error. Please try again later.';
+        } else {
+          errorMessage = `Classification failed (Error ${status}). Check DocEx API logs.`;
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
+        errorMessage = 'Cannot connect to DocEx API. Make sure it\'s running on port 8000.';
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = 'Classification timed out. The document might be too large.';
+      }
+      
+      setSnackbar({
+        open: true,
+        message: errorMessage,
+        severity: 'error'
+      });
+    } finally {
+      setClassifyingDocument(null);
+    }
+  };
+
   return (
     <Box>
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -191,27 +368,83 @@ const Documents = () => {
 
       {/* Search Bar */}
       <Box sx={{ mb: 3 }}>
-        <TextField
-          fullWidth
-          placeholder="Search documents by title or description..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyPress={handleKeyPress}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Search />
-              </InputAdornment>
-            ),
-            endAdornment: (
-              <InputAdornment position="end">
-                <Button onClick={handleSearch} variant="contained" size="small">
-                  Search
-                </Button>
-              </InputAdornment>
-            ),
-          }}
-        />
+        <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+          <TextField
+            fullWidth
+            placeholder="Search documents by title or description..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyPress={handleKeyPress}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search />
+                </InputAdornment>
+              ),
+              endAdornment: (
+                <InputAdornment position="end">
+                  <Button onClick={handleSearch} variant="contained" size="small">
+                    Search
+                  </Button>
+                </InputAdornment>
+              ),
+            }}
+          />
+          <Button
+            variant="outlined"
+            startIcon={<FilterList />}
+            onClick={handleFilterDialogOpen}
+            sx={{ minWidth: 'auto', px: 2 }}
+            color={selectedTags.length > 0 ? 'primary' : 'inherit'}
+          >
+            Filter
+            {selectedTags.length > 0 && (
+              <Box
+                component="span"
+                sx={{
+                  ml: 1,
+                  minWidth: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  backgroundColor: 'primary.main',
+                  color: 'white',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '0.75rem',
+                }}
+              >
+                {selectedTags.length}
+              </Box>
+            )}
+          </Button>
+        </Box>
+        
+        {/* Active Filters Display */}
+        {selectedTags.length > 0 && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <Typography variant="caption" color="text.secondary">
+              Active filters:
+            </Typography>
+            {selectedTags.map((tag) => (
+              <Chip
+                key={tag}
+                label={tag}
+                size="small"
+                color="primary"
+                onDelete={() => handleTagFilter(tag)}
+              />
+            ))}
+            <Button
+              size="small"
+              startIcon={<Clear />}
+              onClick={clearFilters}
+              sx={{ ml: 1 }}
+            >
+              Clear All
+            </Button>
+          </Box>
+        )}
       </Box>
 
       {error && (
@@ -234,9 +467,23 @@ const Documents = () => {
             </Grid>
           ) : (
             documents.map((document) => (
-              <Grid item xs={12} sm={6} md={4} key={document.document_id}>
-                <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <CardContent sx={{ flexGrow: 1, position: 'relative' }}>
+              <Grid item xs={12} sm={6} md={4} lg={3} key={document.document_id}>
+                <Card sx={{ 
+                  height: 350, 
+                  width: '100%',
+                  maxWidth: 320,
+                  display: 'flex', 
+                  flexDirection: 'column',
+                  mx: 'auto'
+                }}>
+                  <CardContent sx={{ 
+                    flexGrow: 1, 
+                    position: 'relative',
+                    height: 280,
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}>
                     <Box sx={{ position: 'absolute', top: 8, right: 8 }}>
                       <IconButton
                         size="small"
@@ -245,10 +492,19 @@ const Documents = () => {
                         <MoreVert />
                       </IconButton>
                     </Box>
-                    <Typography variant="h6" component="h2" gutterBottom sx={{ pr: 5 }}>
+                    <Typography variant="h6" component="h2" gutterBottom sx={{ 
+                      pr: 5,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
                       {document.title}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                    <Typography variant="body2" color="text.secondary" gutterBottom sx={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
                       {document.description || 'No description available'}
                     </Typography>
                     <Typography variant="caption" display="block" gutterBottom>
@@ -257,25 +513,39 @@ const Documents = () => {
                     <Typography variant="caption" display="block" gutterBottom>
                       Department: {document.department_name}
                     </Typography>
-                    <Typography variant="caption" display="block" gutterBottom>
-                      Created: {formatDate(document.created_at)}
+                    <Typography variant="caption" display="block" gutterBottom sx={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Created: {new Date(document.created_at).toLocaleDateString()}
                     </Typography>
-                    
+
                     {document.current_version && (
                       <Box sx={{ mt: 1 }}>
-                        <Typography variant="caption" display="block">
+                        <Typography variant="caption" display="block" sx={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
                           File: {document.current_version.file_name}
                         </Typography>
-                        <Typography variant="caption" display="block">
+                        <Typography variant="caption" display="block" sx={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
                           Size: {formatFileSize(document.current_version.file_size)}
                         </Typography>
-                        <Typography variant="caption" display="block">
+                        <Typography variant="caption" display="block" sx={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
                           Type: {document.current_version.file_type}
                         </Typography>
                       </Box>
-                    )}
-
-                    {document.tags && document.tags.length > 0 && (
+                    )}                    {document.tags && document.tags.length > 0 && (
                       <Box sx={{ mt: 2 }}>
                         {document.tags.map((tag, index) => (
                           <Chip
@@ -303,6 +573,28 @@ const Documents = () => {
                       onClick={() => handleViewVersions(document)}
                     >
                       Versions
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="success"
+                      startIcon={classifyingDocument === document.document_id ? 
+                        <CircularProgress size={16} /> : 
+                        <AutoAwesome />
+                      }
+                      onClick={() => handleClassifyDocument(document)}
+                      disabled={classifyingDocument === document.document_id}
+                      sx={{
+                        borderColor: 'success.main',
+                        color: 'success.main',
+                        '&:hover': {
+                          borderColor: 'success.dark',
+                          backgroundColor: 'success.light',
+                          color: 'success.dark',
+                        }
+                      }}
+                    >
+                      {classifyingDocument === document.document_id ? 'Classifying...' : 'Classify'}
                     </Button>
                   </CardActions>
                 </Card>
@@ -396,6 +688,97 @@ const Documents = () => {
           </Button>
           <Button onClick={handleDelete} color="error" variant="contained">
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Tag Filter Dialog */}
+      <Dialog 
+        open={filterDialogOpen} 
+        onClose={handleFilterDialogClose}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Filter by Tags
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mb: 2 }}>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="Search tags..."
+              value={tagSearchQuery}
+              onChange={(e) => setTagSearchQuery(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Search />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Box>
+          
+          {usedTags.length > 0 ? (
+            <Box>
+              <Typography variant="subtitle2" sx={{ mb: 2 }}>
+                Available Tags ({getFilteredTags().length})
+              </Typography>
+              <Box sx={{ 
+                maxHeight: 300, 
+                overflowY: 'auto',
+                display: 'flex', 
+                flexWrap: 'wrap', 
+                gap: 1 
+              }}>
+                {getFilteredTags().map((tag) => (
+                  <Chip
+                    key={tag}
+                    label={tag}
+                    onClick={() => handleTagFilter(tag)}
+                    color={selectedTags.includes(tag) ? 'primary' : 'default'}
+                    variant={selectedTags.includes(tag) ? 'filled' : 'outlined'}
+                    clickable
+                  />
+                ))}
+              </Box>
+              
+              {selectedTags.length > 0 && (
+                <Box sx={{ mt: 3 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Selected Tags ({selectedTags.length})
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    {selectedTags.map((tag) => (
+                      <Chip
+                        key={tag}
+                        label={tag}
+                        color="primary"
+                        onDelete={() => handleTagFilter(tag)}
+                      />
+                    ))}
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No tags found in existing documents
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleFilterDialogClose}>
+            Cancel
+          </Button>
+          {selectedTags.length > 0 && (
+            <Button onClick={clearFilters} color="secondary">
+              Clear All
+            </Button>
+          )}
+          <Button onClick={handleApplyFilters} variant="contained">
+            Apply Filters
           </Button>
         </DialogActions>
       </Dialog>

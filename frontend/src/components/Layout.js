@@ -49,7 +49,7 @@ const Layout = ({ children }) => {
             sx={{ flexGrow: 1, cursor: 'pointer' }}
             onClick={() => navigate('/documents')}
           >
-            Document Repository
+            Document Repository And Email Classifier
           </Typography>
           
           {user && (
